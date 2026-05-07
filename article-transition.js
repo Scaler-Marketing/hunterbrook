@@ -31,14 +31,22 @@
  *
  *      "done"        → no rule. Image is back to its natural state.
  *
- * 3) The navbar AND the footer are lifted above the spot via z-index during
- *    the reveal so their colours don't get inverted by the spot's blend
- *    mode. Both variant swaps (navbar dark → base, footer light → dark)
- *    are triggered at the START of the spot expansion, not at finish —
- *    CSS transitions on `color`, `fill`, `background-color` etc. are
- *    defined during the "dark" phase too, so the variant class removal
- *    animates over the same 600ms window as the spot. Spot, navbar, and
- *    footer all finish together.
+ * 3) NAVBAR transition strategy (revised in v7): the navbar wrapper is
+ *    NOT lifted above the spot — we let the spot's `mix-blend-mode:
+ *    difference` paint over the navbar, so the bg, logo, and hamburger
+ *    icon visually invert in lockstep with the spot's edge sweeping over
+ *    them. This matches the WordPress reference and keeps the navbar
+ *    transition perfectly synced with the rest of the page reveal. The
+ *    only navbar element lifted above the spot is `.navbar_newsletter-
+ *    button` — without that lift the difference blend would turn the blue
+ *    badge yellow. The variant swap (dark → base) fires at finish() (the
+ *    moment the spot completes) and is atomic: the underlying DOM snaps
+ *    to the state the blend was already showing, so removing the spot is
+ *    visually seamless.
+ *
+ *    The FOOTER wrapper is still lifted (the footer is below the fold for
+ *    most viewports during the reveal and contains non-grayscale form
+ *    elements). Its variant swap also fires at finish().
  *
  * 4) Webflow rich-text content (`.w-richtext` p/h1/ul/li/etc.) doesn't
  *    respect combo classes, so we override `color` directly via injected
@@ -56,6 +64,12 @@
     return;
   }
   window.__hbBreakingNewsRevealInitialized = true;
+
+  // Build marker so we can confirm in the debug overlay / console which
+  // revision of the script is actually executing on the page (rules out
+  // stale cache / un-republished embed when troubleshooting).
+  var HB_BUILD = "v7-navbar-blend-reveal";
+  try { console.log("[hb-bn] build", HB_BUILD); } catch (_) {}
 
   // ─── CONFIG ────────────────────────────────────────────────────────────────
   var CONFIG = {
@@ -146,20 +160,33 @@
       'html[' + CONFIG.revealAttr + '="color-fade"] ' + sel + notNoFilter + notStatic + ", " +
       'html[' + CONFIG.revealAttr + '="done"] ' + sel + notNoFilter + notStatic;
 
-    // Lift the navbar AND footer above the spot during the reveal. Without
-    // this the spot's mix-blend-mode would invert their colours — the white
-    // logo would briefly turn black, the blue Newsletter badge would turn
-    // yellow (difference(white, blue) ≈ yellow), and the footer's light
-    // background would invert mid-fade.
+    // Lift strategy (revised in v7):
     //
-    // The footer is normally `position: static` so z-index has no effect —
-    // we set `position: relative` to give it a positioning context. This is
-    // visually a no-op (the footer stays in normal flow) but allows the
-    // z-index to apply.
+    //   - The NAVBAR WRAPPER is NOT lifted. We deliberately let the spot's
+    //     `mix-blend-mode: difference` paint over it so the bg/logo/menu
+    //     icon visually invert in lockstep with the spot's edge sweeping
+    //     across the navbar. This is what WordPress does and is the only
+    //     way to keep the navbar transition synced with the spot expansion
+    //     while avoiding a gray-on-gray crossover (any monotonic colour
+    //     transition between grayscale opposites must pass through a moment
+    //     where logo and bg have the same RGB value — see the chrome
+    //     transition comment below).
     //
-    // The lift extends into "done" too — removing it would change footer
-    // positioning context (relative → static), which can shift any absolute
-    // descendants and cause a visible flicker.
+    //   - `.navbar_newsletter-button` IS lifted above the spot. It's the
+    //     only non-grayscale element in the navbar; without lifting it the
+    //     difference blend would turn the blue badge yellow mid-reveal.
+    //     The Webflow `<a>` is `position: static` by default so we also set
+    //     `position: relative` to give the z-index a positioning context.
+    //
+    //   - The FOOTER WRAPPER is still lifted. The footer is below the fold
+    //     during the reveal on most viewports, but we lift it as a belt-and-
+    //     -braces so its non-grayscale elements (newsletter form, etc.)
+    //     don't invert if the user happens to have it in view.
+    //
+    //   - The Newsletter / footer lifts extend into "done" too — removing
+    //     `position: relative` mid-frame would change the footer/newsletter's
+    //     positioning context (relative → static) and shift any absolutely
+    //     positioned descendants, producing a visible flicker.
     function liftSelector(scope) {
       return (
         'html[' + CONFIG.revealAttr + '="dark"] ' + scope + ", " +
@@ -168,7 +195,9 @@
         'html[' + CONFIG.revealAttr + '="done"] ' + scope
       );
     }
-    var navLiftSel = liftSelector(NAVBAR_CONFIG.wrapperSelector);
+    var newsletterLiftSel = liftSelector(
+      NAVBAR_CONFIG.wrapperSelector + " .navbar_newsletter-button"
+    );
     var footerLiftSel = liftSelector(FOOTER_CONFIG.wrapperSelector);
 
     // Smooth the variant swaps. Both navbar (dark→base) and footer
@@ -189,6 +218,35 @@
     var navTransitionSel = transitionSelector(NAVBAR_CONFIG.wrapperSelector);
     var footerTransitionSel = transitionSelector(FOOTER_CONFIG.wrapperSelector);
 
+    // ─── LOGO TRANSITION OVERRIDE ─────────────────────────────────────────────
+    // The navbar's embedded helper script injects a separate transition rule
+    // specifically targeting the logo wrapper:
+    //
+    //   [navbar-menu="wrapper"][data-wf--navbar--variant="base"]
+    //     .navbar_logo-wrapper { transition: color 500ms ease; }
+    //
+    // That rule has specificity (0,3,0) — higher than the navTransitionSel
+    // rule above, which is (0,2,1) — so during the reveal the logo wrapper
+    // gets the embed's 500ms `ease` curve instead of our 600ms power1.in.
+    //
+    // The mismatch is what produces the mobile "logo blink": `ease` is fast
+    // out of the gate while `power1.in` is slow out of the gate, so by
+    // ~mid-animation the logo `color` is already mostly at its final dark
+    // value while the navbar `background-color` is barely off black —
+    // dark-ish logo on still-dark background = invisible for ~300ms.
+    //
+    // Fix: a logo-wrapper-specific rule with specificity (0,3,1) — beats the
+    // embed's (0,3,0) — that re-asserts our 600ms power1.in transition for
+    // the reveal phases. Outside the reveal the embed's rule still wins, so
+    // the embed's mobile-menu open/close logo transition is preserved.
+    var logoTransitionSel =
+      'html[' + CONFIG.revealAttr + '="dark"] ' +
+      NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper, " +
+      'html[' + CONFIG.revealAttr + '="reveal-cut"] ' +
+      NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper, " +
+      'html[' + CONFIG.revealAttr + '="color-fade"] ' +
+      NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper";
+
     // Rich-text descendants are forced white during the dark phase
     // (reveal-cut included so the colour stays white right up to finish)
     // then animate to natural via the color-fade rule below.
@@ -208,15 +266,25 @@
       'html[' + CONFIG.revealAttr + '="done"] ' + CONFIG.richTextSelector + ", " +
       'html[' + CONFIG.revealAttr + '="done"] ' + CONFIG.richTextSelector + " *";
 
-    // Reusable transition declaration for chrome (navbar + footer)
+    // Chrome (navbar + footer) transitions are FORCED OFF during the reveal.
+    // The visual transition for the navbar comes from the spot's
+    // `mix-blend-mode: difference` painting over it (see lift comment), not
+    // from CSS colour transitions. We still need to suppress transitions
+    // here so:
+    //   1) The navbar embed's own `transition: color 500ms ease` rule on the
+    //      logo wrapper doesn't fire when the variant class is removed at
+    //      finish() — that would cause the actual logo colour to fade over
+    //      500ms even though the spot's blend has already revealed it as
+    //      dark, producing a brief mismatch between the inverted-via-blend
+    //      state and the actual underlying state.
+    //   2) The Webflow variant transitions on bg/colour don't fire either.
+    //      The blend reveal IS the transition — we want the underlying DOM
+    //      state to snap atomically at finish() so it matches what the blend
+    //      was already showing.
+    // Footer chrome uses the same logic (transitions off so the variant swap
+    // at finish() doesn't fade on top of the blend reveal).
     var chromeTransition = [
-      "  transition:",
-      "    color " + CONFIG.durationMs + "ms " + CONFIG.easing + ",",
-      "    background-color " + CONFIG.durationMs + "ms " + CONFIG.easing + ",",
-      "    fill " + CONFIG.durationMs + "ms " + CONFIG.easing + ",",
-      "    stroke " + CONFIG.durationMs + "ms " + CONFIG.easing + ",",
-      "    border-color " + CONFIG.durationMs + "ms " + CONFIG.easing + ",",
-      "    opacity " + CONFIG.durationMs + "ms " + CONFIG.easing + ";",
+      "  transition: none !important;",
     ];
 
     var lines = [
@@ -231,7 +299,13 @@
       "  filter: contrast(100%) grayscale(0%);",
       "  transition: filter " + CONFIG.colorFadeMs + "ms " + CONFIG.colorFadeEasing + ";",
       "}",
-      navLiftSel + " {",
+      // Newsletter button: only non-grayscale element in the navbar (blue
+      // badge). Lifted above the spot so the difference blend doesn't turn
+      // it yellow. Set `position: relative` so the z-index has a positioning
+      // context — the Webflow `<a>` is `position: static` by default. Layout
+      // is unaffected (no inset values applied).
+      newsletterLiftSel + " {",
+      "  position: relative !important;",
       "  z-index: 2147483647 !important;",
       "}",
       // Footer is normally position: static — needs `position: relative` for
@@ -270,12 +344,20 @@
       .concat(chromeTransition)
       .concat([
         "}",
+        // Logo-wrapper override: must beat the navbar embed's
+        // (0,3,0)-specificity `transition: color 500ms ease` rule, so use
+        // !important as well as the higher-specificity selector. We snap
+        // here for the same reason as the chrome above — see comment near
+        // chromeTransition.
+        logoTransitionSel + " {",
+        "  transition: none !important;",
+        "}",
         "@media (prefers-reduced-motion: reduce) {",
         "  " + darkSel + ", " + cutSel + ", " + fadeSel + " {",
         "    filter: none !important;",
         "    transition: none !important;",
         "  }",
-        "  " + navTransitionSel + ", " + footerTransitionSel + " {",
+        "  " + navTransitionSel + ", " + footerTransitionSel + ", " + logoTransitionSel + " {",
         "    transition: none !important;",
         "  }",
         "  " + richTextWhiteSel + " {",
@@ -345,6 +427,10 @@
 
   // ─── NAVBAR ────────────────────────────────────────────────────────────────
   function setNavbarBaseMode() {
+    if (HB_DEBUG && typeof hbLog === "function") {
+      hbLog("setNavbarBaseMode", hbSnap());
+    }
+
     if (
       window.HunterbrookNav &&
       typeof window.HunterbrookNav.setNavbarBase === "function"
@@ -364,6 +450,216 @@
     );
 
     window.dispatchEvent(new Event("resize"));
+  }
+
+  // ─── LOGO COLOUR GUARD ─────────────────────────────────────────────────────
+  // Belt-and-braces: if anything ever sets inline `color` on the logo
+  // wrapper while the trigger is NOT `is-open` (e.g. a stale resize-driven
+  // run of the navbar embed that races with another state change), strip it
+  // immediately. Doesn't fire under normal operation; harmless if it does.
+  function installLogoColorGuard() {
+    if (typeof MutationObserver !== "function") return;
+
+    document.querySelectorAll(NAVBAR_CONFIG.wrapperSelector).forEach(
+      function (wrapper) {
+        var logo = wrapper.querySelector(".navbar_logo-wrapper");
+        var trigger = wrapper.querySelector('[navbar-menu="trigger"]');
+        if (!logo || !trigger) return;
+        if (logo.__hbLogoGuardInstalled) return;
+        logo.__hbLogoGuardInstalled = true;
+
+        function isMenuOpen() { return trigger.classList.contains("is-open"); }
+
+        var observer = new MutationObserver(function () {
+          if (isMenuOpen()) return;
+          if (logo.style && logo.style.color) {
+            logo.style.removeProperty("color");
+          }
+        });
+        observer.observe(logo, {
+          attributes: true,
+          attributeFilter: ["style"],
+        });
+
+        if (!isMenuOpen() && logo.style && logo.style.color) {
+          logo.style.removeProperty("color");
+        }
+      }
+    );
+  }
+
+  // ─── DEBUG OVERLAY (gated by ?hbdebug=1) ───────────────────────────────────
+  // Mounts a small fixed panel in the top-right of the screen that shows
+  // live state for both the navbar wrapper and the logo wrapper, plus the
+  // computed `transition` string on each — so we can verify the script's
+  // logo-transition override actually took effect, and see whether the
+  // navbar background-color is moving in sync with the logo color.
+  // Tap the overlay to copy its contents to the clipboard.
+  function isHbDebugEnabled() {
+    try {
+      if (/[?&]hbdebug=1\b/.test((window.location && window.location.search) || "")) return true;
+    } catch (_) {}
+    try {
+      if (window.localStorage && window.localStorage.getItem("hbdebug") === "1") return true;
+    } catch (_) {}
+    return false;
+  }
+
+  var HB_DEBUG = isHbDebugEnabled();
+  var HB_T0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  var HB_LOG = [];
+  var HB_OVERLAY_EL = null;
+
+  function hbNow() {
+    return Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - HB_T0);
+  }
+
+  function hbSnap() {
+    var wrapper = document.querySelector(NAVBAR_CONFIG.wrapperSelector);
+    if (!wrapper) return null;
+    var logo = wrapper.querySelector(".navbar_logo-wrapper");
+    var trigger = wrapper.querySelector('[navbar-menu="trigger"]');
+    var wcs = window.getComputedStyle ? window.getComputedStyle(wrapper) : null;
+    var lcs = logo && window.getComputedStyle ? window.getComputedStyle(logo) : null;
+    return {
+      reveal: document.documentElement.getAttribute(CONFIG.revealAttr) || "(unset)",
+      variant: wrapper.getAttribute(NAVBAR_CONFIG.attr) || "(unset)",
+      triggerOpen: trigger ? trigger.classList.contains("is-open") : "(no trigger)",
+      vw: window.innerWidth,
+      // Navbar wrapper itself
+      wrapperBg: wcs ? wcs.backgroundColor : "?",
+      wrapperColor: wcs ? wcs.color : "?",
+      wrapperTransition: wcs ? wcs.transition : "?",
+      // Logo wrapper (child)
+      logoColor: lcs ? lcs.color : "?",
+      logoOpacity: lcs ? lcs.opacity : "?",
+      logoVisibility: lcs ? lcs.visibility : "?",
+      logoTransition: lcs ? lcs.transition : "?",
+      logoInline: logo ? (logo.getAttribute("style") || "") : "(no logo)",
+    };
+  }
+
+  function hbLog(kind, info) {
+    if (!HB_DEBUG) return;
+    HB_LOG.push({ t: hbNow(), kind: kind, info: info });
+    if (HB_LOG.length > 200) HB_LOG.shift();
+    try { console.log("[hb-bn +" + HB_LOG[HB_LOG.length - 1].t + "ms]", kind, info); } catch (_) {}
+    hbRender();
+  }
+
+  function hbEnsureOverlay() {
+    if (!HB_DEBUG) return null;
+    if (HB_OVERLAY_EL && document.body && document.body.contains(HB_OVERLAY_EL)) return HB_OVERLAY_EL;
+    if (!document.body) return null;
+    var el = document.createElement("div");
+    el.id = "hb-bn-debug";
+    el.setAttribute("style", [
+      "position:fixed", "top:8px", "right:8px",
+      "z-index:2147483647",
+      "max-width:min(96vw,520px)", "max-height:70vh",
+      "overflow:auto",
+      "padding:8px 10px", "border-radius:8px",
+      "background:rgba(0,0,0,0.85)", "color:#0f0",
+      "font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace",
+      "white-space:pre-wrap",
+      "box-shadow:0 4px 16px rgba(0,0,0,0.4)",
+    ].join(";"));
+    el.addEventListener("click", function () {
+      try {
+        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(el.textContent);
+          var n = document.createElement("div");
+          n.textContent = "(copied)";
+          n.style.color = "#9ff";
+          el.appendChild(n);
+          setTimeout(function () { if (n.parentNode) n.parentNode.removeChild(n); }, 1000);
+        }
+      } catch (_) {}
+    });
+    document.body.appendChild(el);
+    HB_OVERLAY_EL = el;
+    return el;
+  }
+
+  function hbRender() {
+    if (!HB_DEBUG) return;
+    var el = hbEnsureOverlay();
+    if (!el) return;
+    var s = hbSnap();
+    var head = "[hb-bn build=" + HB_BUILD + "] tap to copy\n";
+    if (s) {
+      head +=
+        "reveal=" + s.reveal + " | variant=" + s.variant +
+        " | open=" + s.triggerOpen + " | vw=" + s.vw + "\n" +
+        "WRAPPER bg=" + s.wrapperBg + " | color=" + s.wrapperColor + "\n" +
+        "  trans=" + s.wrapperTransition + "\n" +
+        "LOGO color=" + s.logoColor + " | op=" + s.logoOpacity + " | vis=" + s.logoVisibility + "\n" +
+        "  trans=" + s.logoTransition + "\n" +
+        "  inline=" + (s.logoInline || "(none)") + "\n";
+    } else {
+      head += "(no navbar wrapper found yet)\n";
+    }
+    var rows = HB_LOG.slice(-80).map(function (e) {
+      return "+" + e.t + "ms " + e.kind +
+        (e.info && typeof e.info === "object" ? " " + JSON.stringify(e.info) :
+         e.info != null ? " " + e.info : "");
+    }).join("\n");
+    el.textContent = head + "\n--- last " + Math.min(HB_LOG.length, 80) + " events ---\n" + rows;
+  }
+
+  function installDebugInstrumentation() {
+    if (!HB_DEBUG) return;
+    if (typeof MutationObserver !== "function") return;
+
+    var wrapper = document.querySelector(NAVBAR_CONFIG.wrapperSelector);
+    if (!wrapper) return;
+    var trigger = wrapper.querySelector('[navbar-menu="trigger"]');
+
+    new MutationObserver(function (muts) {
+      muts.forEach(function (m) { hbLog("wrapper." + m.attributeName, hbSnap()); });
+    }).observe(wrapper, {
+      attributes: true,
+      attributeFilter: ["class", NAVBAR_CONFIG.attr, "style"],
+    });
+
+    if (trigger) {
+      new MutationObserver(function (muts) {
+        muts.forEach(function (m) { hbLog("trigger." + m.attributeName, hbSnap()); });
+      }).observe(trigger, {
+        attributes: true,
+        attributeFilter: ["class", "aria-expanded"],
+      });
+    }
+
+    new MutationObserver(function (muts) {
+      muts.forEach(function (m) {
+        if (m.attributeName === CONFIG.revealAttr) {
+          hbLog("html.reveal", document.documentElement.getAttribute(CONFIG.revealAttr));
+        }
+      });
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: [CONFIG.revealAttr],
+    });
+
+    // Sample fast (every 50ms for 2s = 40 samples) to capture the
+    // transition window in detail, then taper to 200ms for context.
+    var samples = 0;
+    var fastInterval = setInterval(function () {
+      samples++;
+      hbLog("s", hbSnap());
+      if (samples >= 40) {
+        clearInterval(fastInterval);
+        var slow = 0;
+        var slowInterval = setInterval(function () {
+          slow++;
+          hbLog("S", hbSnap());
+          if (slow >= 15) clearInterval(slowInterval);
+        }, 200);
+      }
+    }, 50);
+
+    hbLog("debug install", hbSnap());
   }
 
   // ─── FOOTER ────────────────────────────────────────────────────────────────
@@ -459,6 +755,9 @@
   function runReveal() {
     var targets = getTargets();
 
+    installLogoColorGuard();
+    installDebugInstrumentation();
+
     if (!targets.length) {
       // Nothing to swap — clear the dark filter so images don't get stuck
       setRevealState("done");
@@ -491,18 +790,19 @@
     function swapNavbarOnce() {
       if (navbarSwapped) return;
       navbarSwapped = true;
-      // Triggers the variant class removal. The CSS transition rules defined
-      // for the "dark" phase animate the colour change over CONFIG.durationMs,
-      // so the navbar fades into base mode in lockstep with the spot.
+      // Snaps the navbar from dark to base by removing the variant class.
+      // The injected `transition: none !important` rule (see chromeTransition
+      // in injectInitStyles) keeps this change instantaneous — no smooth
+      // colour fade — to avoid the gray-on-gray invisibility window any
+      // monotonic transition between grayscale opposites must produce.
       setNavbarBaseMode();
     }
 
     function swapFooterOnce() {
       if (footerSwapped) return;
       footerSwapped = true;
-      // Same mechanism as the navbar but in the inverse direction —
-      // light-mode variant class is removed so the footer falls back to its
-      // base (dark) variant. CSS transitions handle the colour fade.
+      // Same as the navbar but in the inverse direction (light → dark
+      // variant) — also snaps thanks to the same `transition: none` rule.
       setFooterDarkMode();
     }
 
@@ -510,10 +810,13 @@
       if (swapped) return;
       swapped = true;
 
-      // 1. Atomic mode swap — by now the white circle covers the viewport,
-      //    so changing classes is invisible to the user. Navbar/footer were
-      //    already swapped at the start of the animation, but call again as
-      //    a safety net in case the early calls were missed.
+      // 1. Atomic mode swap — by now the white spot covers the viewport,
+      //    so changing the body classes is invisible to the user (the
+      //    transitioned image filters etc. are already showing as if light).
+      //    The navbar and footer (lifted above the spot) are also swapped
+      //    HERE rather than at the start of the spot expansion: this aligns
+      //    the navbar/footer "snap" with the moment the spot finishes its
+      //    expansion, so the user perceives a single coordinated reveal.
       removeDarkThemeClasses(targets);
       swapNavbarOnce();
       swapFooterOnce();
@@ -552,12 +855,14 @@
         spot.style.width = scale + "px";
         spot.style.height = scale + "px";
 
-        // Trigger the navbar AND footer variant swaps NOW so their colour
-        // transitions play out alongside the spot expansion (both 600ms,
-        // same easing, all three finish together — navbar dark→base,
-        // footer light→dark, spot at full coverage).
-        swapNavbarOnce();
-        swapFooterOnce();
+        // Note: the navbar/footer variant swaps DELIBERATELY do NOT happen
+        // here. They are deferred to finish() so the snap is timed with
+        // the spot reaching full coverage, not the start of the expansion.
+        // (Earlier builds called swapNavbarOnce()/swapFooterOnce() here so
+        // their colour transitions could run in parallel with the spot,
+        // but transitioning grayscale opposites smoothly produces a brief
+        // gray-on-gray invisibility window — see chromeTransition comment
+        // in injectInitStyles.)
 
         // Safety net: if transitionend doesn't fire (e.g. tab inactive,
         // animation interrupted) we still complete the swap on a timer
@@ -583,3 +888,4 @@
     window.addEventListener("load", boot, { once: true });
   }
 })();
+
