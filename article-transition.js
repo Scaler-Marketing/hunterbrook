@@ -68,7 +68,7 @@
   // Build marker so we can confirm in the debug overlay / console which
   // revision of the script is actually executing on the page (rules out
   // stale cache / un-republished embed when troubleshooting).
-  var HB_BUILD = "v7-navbar-blend-reveal";
+  var HB_BUILD = "v8-no-rich-text-or-newsletter-flash";
   try { console.log("[hb-bn] build", HB_BUILD); } catch (_) {}
 
   // ─── CONFIG ────────────────────────────────────────────────────────────────
@@ -247,24 +247,22 @@
       'html[' + CONFIG.revealAttr + '="color-fade"] ' +
       NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper";
 
-    // Rich-text descendants are forced white during the dark phase
-    // (reveal-cut included so the colour stays white right up to finish)
-    // then animate to natural via the color-fade rule below.
+    // Rich-text descendants are forced white ONLY during the `dark` phase.
+    // Webflow rich-text content (p/h1/ul/li/etc.) is generated and doesn't
+    // respect combo classes, so we have to force the colour explicitly.
+    //
+    // Important: the white force is dropped at finish() (state transition to
+    // `reveal-cut`) — i.e. at the SAME instant the variant classes are
+    // removed, the spot is removed, and the page bg snaps from dark to
+    // light. This way the rich text snaps from forced-white to its natural
+    // (base-variant) dark colour atomically with everything else, instead
+    // of being held white for a frame on a now-light background and then
+    // slow-fading through gray (which the eye reads as a "flash"). It's the
+    // same atomic-text-swap pattern WordPress uses, and matches the rest of
+    // the chrome which also snaps at finish().
     var richTextWhiteSel =
       'html[' + CONFIG.revealAttr + '="dark"] ' + CONFIG.richTextSelector + ", " +
-      'html[' + CONFIG.revealAttr + '="dark"] ' + CONFIG.richTextSelector + " *, " +
-      'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + CONFIG.richTextSelector + ", " +
-      'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + CONFIG.richTextSelector + " *";
-    // Color-fade phase: drop the forced colour and animate `color` to the
-    // natural value (which is now light-mode after the class swap at finish).
-    // Extends into "done" so the transition declaration doesn't disappear at
-    // the same instant other rules deactivate, which would compound recompose
-    // work into the same frame.
-    var richTextFadeSel =
-      'html[' + CONFIG.revealAttr + '="color-fade"] ' + CONFIG.richTextSelector + ", " +
-      'html[' + CONFIG.revealAttr + '="color-fade"] ' + CONFIG.richTextSelector + " *, " +
-      'html[' + CONFIG.revealAttr + '="done"] ' + CONFIG.richTextSelector + ", " +
-      'html[' + CONFIG.revealAttr + '="done"] ' + CONFIG.richTextSelector + " *";
+      'html[' + CONFIG.revealAttr + '="dark"] ' + CONFIG.richTextSelector + " *";
 
     // Chrome (navbar + footer) transitions are FORCED OFF during the reveal.
     // The visual transition for the navbar comes from the spot's
@@ -315,15 +313,11 @@
       "  position: relative !important;",
       "  z-index: 2147483647 !important;",
       "}",
-      // Rich-text: white during dark/reveal-cut, then animate to natural
-      // colour during color-fade. Webflow rich-text descendants don't
-      // respect combo classes, so we force the colour directly.
+      // Rich-text: white during the `dark` phase only (see richTextWhiteSel
+      // comment for why we don't keep this through reveal-cut and why we
+      // don't run a color transition into color-fade).
       richTextWhiteSel + " {",
       "  color: #ffffff !important;",
-      "}",
-      richTextFadeSel + " {",
-      "  transition: color " +
-        CONFIG.colorFadeMs + "ms " + CONFIG.colorFadeEasing + ";",
       "}",
       // Footer rich text in dark-mode: force white (Webflow's footer
       // dark-mode variant doesn't restyle rich-text descendants, so the
@@ -362,9 +356,6 @@
         "  }",
         "  " + richTextWhiteSel + " {",
         "    color: inherit !important;",
-        "  }",
-        "  " + richTextFadeSel + " {",
-        "    transition: none !important;",
         "  }",
         "}",
       ]);
@@ -443,6 +434,19 @@
       function (wrapper) {
         wrapper.classList.remove(NAVBAR_CONFIG.variantClass);
         wrapper.querySelectorAll("*").forEach(function (el) {
+          // Skip the Newsletter button — it's lifted above the spot (so it
+          // never gets visually inverted via the difference blend) and its
+          // dark- and base-variant styles aren't pixel-identical, so flipping
+          // its variant class at finish() would show as a one-frame "flash"
+          // even with `transition: none` suppressing any fade. Leaving the
+          // class on means the button keeps rendering with its dark-variant
+          // styles for the rest of the page lifetime, which visually matches
+          // what the user already sees throughout the spot expansion. Each
+          // page navigation reloads the navbar markup so this doesn't
+          // accumulate state across pages.
+          if (el.matches(".navbar_newsletter-button, .navbar_newsletter-button *")) {
+            return;
+          }
           el.classList.remove(NAVBAR_CONFIG.variantClass);
         });
         wrapper.setAttribute(NAVBAR_CONFIG.attr, NAVBAR_CONFIG.baseVariant);
@@ -888,4 +892,3 @@
     window.addEventListener("load", boot, { once: true });
   }
 })();
-
