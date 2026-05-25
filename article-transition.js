@@ -195,10 +195,28 @@
         'html[' + CONFIG.revealAttr + '="done"] ' + scope
       );
     }
+    // Same as liftSelector but omits the "done" phase. Used for the footer
+    // z-index lift: we want the lift active during the reveal (so the spot's
+    // difference blend doesn't invert the footer's non-grayscale elements)
+    // but we MUST drop the z-index in the steady "done" state, otherwise
+    // .section_footer permanently sits at z-index: 2147483647 and stacks on
+    // top of the fixed navbar (z-index: 999) when the user scrolls to the
+    // bottom of the article. The position: relative half of the lift still
+    // persists into "done" via the separate footerPositionSel rule below,
+    // so we don't lose the positioning context and don't trigger a layout
+    // shift on transition out of color-fade.
+    function revealOnlyLiftSelector(scope) {
+      return (
+        'html[' + CONFIG.revealAttr + '="dark"] ' + scope + ", " +
+        'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + scope + ", " +
+        'html[' + CONFIG.revealAttr + '="color-fade"] ' + scope
+      );
+    }
     var newsletterLiftSel = liftSelector(
       NAVBAR_CONFIG.wrapperSelector + " .navbar_newsletter-button"
     );
-    var footerLiftSel = liftSelector(FOOTER_CONFIG.wrapperSelector);
+    var footerPositionSel = liftSelector(FOOTER_CONFIG.wrapperSelector);
+    var footerZIndexSel = revealOnlyLiftSelector(FOOTER_CONFIG.wrapperSelector);
 
     // Smooth the variant swaps. Both navbar (dark→base) and footer
     // (light→dark) variants are removed at the START of the spot animation
@@ -308,9 +326,20 @@
       "}",
       // Footer is normally position: static — needs `position: relative` for
       // z-index to take effect. This doesn't change layout (footer is still
-      // in normal flow) but creates a positioning context.
-      footerLiftSel + " {",
+      // in normal flow) but creates a positioning context. `position:
+      // relative` is kept active through `done` to avoid changing the
+      // footer's positioning context mid-frame (relative → static would
+      // shift any absolutely positioned descendants). The z-index lift,
+      // however, is dropped in `done` — see revealOnlyLiftSelector comment
+      // above. The lift is only needed during the reveal so the spot's
+      // difference blend doesn't invert the footer's non-grayscale elements;
+      // once the reveal completes the footer must return to its natural
+      // stack order so the fixed navbar (z-index: 999) can sit on top of it
+      // when the user scrolls to the bottom of the article.
+      footerPositionSel + " {",
       "  position: relative !important;",
+      "}",
+      footerZIndexSel + " {",
       "  z-index: 2147483647 !important;",
       "}",
       // Rich-text: white during the `dark` phase only (see richTextWhiteSel
