@@ -18,14 +18,14 @@
     ])
   );
 
-  const panel = document.createElement("div");
+  const panel = document.createElement("span");
   panel.id = "hb-fn-inline-panel";
   panel.className = "hb-fn-inline";
   panel.hidden = true;
   panel.setAttribute("role", "note");
 
   let activeButton = null;
-  let activeAnchor = null;
+  let activeReference = null;
   let transformedCount = 0;
 
   function setExpanded(button, value) {
@@ -34,15 +34,15 @@
     }
   }
 
-  function insertPanelAfter(anchor) {
-    if (!anchor || !anchor.parentNode) return;
-    anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+  function insertPanelAfter(reference) {
+    if (!reference || !reference.parentNode) return;
+    reference.parentNode.insertBefore(panel, reference.nextSibling);
   }
 
   function closePanel() {
     setExpanded(activeButton, false);
     activeButton = null;
-    activeAnchor = null;
+    activeReference = null;
     panel.hidden = true;
     panel.classList.remove("is-visible");
     panel.innerHTML = "";
@@ -52,29 +52,26 @@
     }
   }
 
-  function findAnchor(button) {
-    return (
-      button.closest("p, blockquote, li, h1, h2, h3, h4, h5, h6, figcaption") ||
-      button.closest(".article_rich-text")
-    );
+  function findReference(button) {
+    return button.closest(".hb-fn-ref");
   }
 
   function openPanel(button) {
     const noteNumber = button.dataset.fn;
     const note = noteMap.get(noteNumber);
-    const anchor = findAnchor(button);
+    const reference = findReference(button);
 
-    if (!note || !anchor) return;
+    if (!note || !reference) return;
 
     if (activeButton && activeButton !== button) {
       setExpanded(activeButton, false);
     }
 
     activeButton = button;
-    activeAnchor = anchor;
+    activeReference = reference;
 
     panel.innerHTML = note.html;
-    insertPanelAfter(anchor);
+    insertPanelAfter(reference);
     panel.hidden = false;
     panel.classList.add("is-visible");
     setExpanded(button, true);
@@ -132,8 +129,8 @@
   });
 
   window.addEventListener("resize", () => {
-    if (activeButton && activeAnchor && panel.parentNode) {
-      insertPanelAfter(activeAnchor);
+    if (activeButton && activeReference && panel.parentNode) {
+      insertPanelAfter(activeReference);
     }
   });
 })();
