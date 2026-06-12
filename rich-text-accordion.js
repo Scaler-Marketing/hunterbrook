@@ -244,6 +244,12 @@
     item.remove();
     wrapper.appendChild(fragment);
     bindAccordion(wrapper);
+
+    document.dispatchEvent(
+      new CustomEvent("hb-accordion-rich-text-built", {
+        detail: { wrapper: wrapper },
+      })
+    );
   }
 
   function init() {
