@@ -39,7 +39,10 @@
  *    transition perfectly synced with the rest of the page reveal. The
  *    only navbar element lifted above the spot is `.navbar_newsletter-
  *    button` — without that lift the difference blend would turn the blue
- *    badge yellow. The variant swap (dark → base) fires at finish() (the
+ *    badge yellow. The same lift is applied to the third-party cookie-script
+ *    consent banner (`#cookiescript_injected`), whose blue background would
+ *    otherwise flash blue → yellow → blue as the spot sweeps over it. The
+ *    variant swap (dark → base) fires at finish() (the
  *    moment the spot completes) and is atomic: the underlying DOM snaps
  *    to the state the blend was already showing, so removing the spot is
  *    visually seamless.
@@ -68,8 +71,10 @@
   // Build marker so we can confirm in the debug overlay / console which
   // revision of the script is actually executing on the page (rules out
   // stale cache / un-republished embed when troubleshooting).
-  var HB_BUILD = "v8-no-rich-text-or-newsletter-flash";
-  try { console.log("[hb-bn] build", HB_BUILD); } catch (_) {}
+  var HB_BUILD = "v9-cookie-banner-lift";
+  try {
+    console.log("[hb-bn] build", HB_BUILD);
+  } catch (_) {}
 
   // ─── CONFIG ────────────────────────────────────────────────────────────────
   var CONFIG = {
@@ -90,6 +95,15 @@
     // its own variant swap.
     richTextSelector: ".w-richtext:not(.footer_rich-text-light)",
     logoSelector: ".navbar_logo-wrapper",
+    // Third-party cookie-script consent banner. It's injected at runtime by
+    // an external script and contains a non-grayscale (blue) background, so —
+    // exactly like the navbar newsletter button — the spot's difference blend
+    // would invert it to yellow mid-reveal and snap it back to blue at finish.
+    // We lift it above the spot so the blend never paints over it. Target both
+    // the outer wrapper and the inner dialog (the inner is `position: fixed`
+    // by default, so the z-index takes effect there).
+    cookieBannerSelector:
+      "#cookiescript_injected_wrapper, #cookiescript_injected",
     spotClass: "hb-breaking-news-spot",
     initStyleId: "hb-breaking-news-init-styles",
     spotStyleId: "hb-breaking-news-spot-styles",
@@ -153,12 +167,28 @@
     var notNoFilter = ":not([" + CONFIG.noFilterAttr + "])";
     var notStatic = ":not([data-theme-static])";
     var darkSel =
-      'html[' + CONFIG.revealAttr + '="dark"] ' + sel + notNoFilter + notStatic;
+      "html[" + CONFIG.revealAttr + '="dark"] ' + sel + notNoFilter + notStatic;
     var cutSel =
-      'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + sel + notNoFilter + notStatic;
+      "html[" +
+      CONFIG.revealAttr +
+      '="reveal-cut"] ' +
+      sel +
+      notNoFilter +
+      notStatic;
     var fadeSel =
-      'html[' + CONFIG.revealAttr + '="color-fade"] ' + sel + notNoFilter + notStatic + ", " +
-      'html[' + CONFIG.revealAttr + '="done"] ' + sel + notNoFilter + notStatic;
+      "html[" +
+      CONFIG.revealAttr +
+      '="color-fade"] ' +
+      sel +
+      notNoFilter +
+      notStatic +
+      ", " +
+      "html[" +
+      CONFIG.revealAttr +
+      '="done"] ' +
+      sel +
+      notNoFilter +
+      notStatic;
 
     // Lift strategy (revised in v7):
     //
@@ -189,10 +219,25 @@
     //     positioned descendants, producing a visible flicker.
     function liftSelector(scope) {
       return (
-        'html[' + CONFIG.revealAttr + '="dark"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="color-fade"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="done"] ' + scope
+        "html[" +
+        CONFIG.revealAttr +
+        '="dark"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="reveal-cut"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="color-fade"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="done"] ' +
+        scope
       );
     }
     // Same as liftSelector but omits the "done" phase. Used for the footer
@@ -207,13 +252,24 @@
     // shift on transition out of color-fade.
     function revealOnlyLiftSelector(scope) {
       return (
-        'html[' + CONFIG.revealAttr + '="dark"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="color-fade"] ' + scope
+        "html[" +
+        CONFIG.revealAttr +
+        '="dark"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="reveal-cut"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="color-fade"] ' +
+        scope
       );
     }
     var newsletterLiftSel = liftSelector(
-      NAVBAR_CONFIG.wrapperSelector + " .navbar_newsletter-button"
+      NAVBAR_CONFIG.wrapperSelector + " .navbar_newsletter-button",
     );
     var footerPositionSel = liftSelector(FOOTER_CONFIG.wrapperSelector);
     var footerZIndexSel = revealOnlyLiftSelector(FOOTER_CONFIG.wrapperSelector);
@@ -225,12 +281,36 @@
     // would happen before the transition is registered and snap.
     function transitionSelector(scope) {
       return (
-        'html[' + CONFIG.revealAttr + '="dark"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="dark"] ' + scope + " *, " +
-        'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="reveal-cut"] ' + scope + " *, " +
-        'html[' + CONFIG.revealAttr + '="color-fade"] ' + scope + ", " +
-        'html[' + CONFIG.revealAttr + '="color-fade"] ' + scope + " *"
+        "html[" +
+        CONFIG.revealAttr +
+        '="dark"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="dark"] ' +
+        scope +
+        " *, " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="reveal-cut"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="reveal-cut"] ' +
+        scope +
+        " *, " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="color-fade"] ' +
+        scope +
+        ", " +
+        "html[" +
+        CONFIG.revealAttr +
+        '="color-fade"] ' +
+        scope +
+        " *"
       );
     }
     var navTransitionSel = transitionSelector(NAVBAR_CONFIG.wrapperSelector);
@@ -258,12 +338,21 @@
     // the reveal phases. Outside the reveal the embed's rule still wins, so
     // the embed's mobile-menu open/close logo transition is preserved.
     var logoTransitionSel =
-      'html[' + CONFIG.revealAttr + '="dark"] ' +
-      NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper, " +
-      'html[' + CONFIG.revealAttr + '="reveal-cut"] ' +
-      NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper, " +
-      'html[' + CONFIG.revealAttr + '="color-fade"] ' +
-      NAVBAR_CONFIG.wrapperSelector + " .navbar_logo-wrapper";
+      "html[" +
+      CONFIG.revealAttr +
+      '="dark"] ' +
+      NAVBAR_CONFIG.wrapperSelector +
+      " .navbar_logo-wrapper, " +
+      "html[" +
+      CONFIG.revealAttr +
+      '="reveal-cut"] ' +
+      NAVBAR_CONFIG.wrapperSelector +
+      " .navbar_logo-wrapper, " +
+      "html[" +
+      CONFIG.revealAttr +
+      '="color-fade"] ' +
+      NAVBAR_CONFIG.wrapperSelector +
+      " .navbar_logo-wrapper";
 
     // Rich-text descendants are forced white ONLY during the `dark` phase.
     // Webflow rich-text content (p/h1/ul/li/etc.) is generated and doesn't
@@ -279,8 +368,16 @@
     // same atomic-text-swap pattern WordPress uses, and matches the rest of
     // the chrome which also snaps at finish().
     var richTextWhiteSel =
-      'html[' + CONFIG.revealAttr + '="dark"] ' + CONFIG.richTextSelector + ", " +
-      'html[' + CONFIG.revealAttr + '="dark"] ' + CONFIG.richTextSelector + " *";
+      "html[" +
+      CONFIG.revealAttr +
+      '="dark"] ' +
+      CONFIG.richTextSelector +
+      ", " +
+      "html[" +
+      CONFIG.revealAttr +
+      '="dark"] ' +
+      CONFIG.richTextSelector +
+      " *";
 
     // Chrome (navbar + footer) transitions are FORCED OFF during the reveal.
     // The visual transition for the navbar comes from the spot's
@@ -299,9 +396,7 @@
     //      was already showing.
     // Footer chrome uses the same logic (transitions off so the variant swap
     // at finish() doesn't fade on top of the blend reveal).
-    var chromeTransition = [
-      "  transition: none !important;",
-    ];
+    var chromeTransition = ["  transition: none !important;"];
 
     var lines = [
       darkSel + " {",
@@ -313,7 +408,11 @@
       "}",
       fadeSel + " {",
       "  filter: contrast(100%) grayscale(0%);",
-      "  transition: filter " + CONFIG.colorFadeMs + "ms " + CONFIG.colorFadeEasing + ";",
+      "  transition: filter " +
+        CONFIG.colorFadeMs +
+        "ms " +
+        CONFIG.colorFadeEasing +
+        ";",
       "}",
       // Newsletter button: only non-grayscale element in the navbar (blue
       // badge). Lifted above the spot so the difference blend doesn't turn
@@ -342,6 +441,30 @@
       footerZIndexSel + " {",
       "  z-index: 2147483647 !important;",
       "}",
+      // Cookie-script consent banner: lifted above the spot so the difference
+      // blend never inverts its blue background (blue → yellow → blue flash).
+      // Same mechanism/fix as the newsletter button. These rules are phase-
+      // independent (not keyed off the reveal attribute) because the banner is
+      // injected asynchronously by a third-party script and may appear at any
+      // point — including mid-reveal — so it must always outrank the spot's
+      // z-index (2147483646). Keeping this permanent is harmless: a consent
+      // banner is meant to sit on top of all page content anyway.
+      //
+      // The z-index is applied to BOTH the outer wrapper and the inner dialog,
+      // but `position` is set ONLY on the outer wrapper — the inner dialog is
+      // `position: fixed` by default (that's what pins the banner to the
+      // viewport) and we must NOT override it to `relative`, or the banner
+      // would scroll away with the page.
+      CONFIG.cookieBannerSelector + " {",
+      "  z-index: 2147483647 !important;",
+      "}",
+      // Give the outer wrapper a positioning context in case it's
+      // `position: static` (a z-index on a static element is ignored). Scoped
+      // to the wrapper only, and without !important, so it never clobbers the
+      // inner dialog's `position: fixed`.
+      "#cookiescript_injected_wrapper {",
+      "  position: relative;",
+      "}",
       // Rich-text: white during the `dark` phase only (see richTextWhiteSel
       // comment for why we don't keep this through reveal-cut and why we
       // don't run a color transition into color-fade).
@@ -356,8 +479,16 @@
       // stays applied for good. The existing footerTransitionSel rule
       // animates `color` over 600ms, so the text smoothly fades from its
       // light-mode colour to white during the spot expansion.
-      ".section_footer[" + FOOTER_CONFIG.attr + "=\"" + FOOTER_CONFIG.darkVariant + "\"] .footer_rich-text-light, " +
-      ".section_footer[" + FOOTER_CONFIG.attr + "=\"" + FOOTER_CONFIG.darkVariant + "\"] .footer_rich-text-light * {",
+      ".section_footer[" +
+        FOOTER_CONFIG.attr +
+        '="' +
+        FOOTER_CONFIG.darkVariant +
+        '"] .footer_rich-text-light, ' +
+        ".section_footer[" +
+        FOOTER_CONFIG.attr +
+        '="' +
+        FOOTER_CONFIG.darkVariant +
+        '"] .footer_rich-text-light * {',
       "  color: #ffffff !important;",
       "}",
       navTransitionSel + " {",
@@ -380,7 +511,13 @@
         "    filter: none !important;",
         "    transition: none !important;",
         "  }",
-        "  " + navTransitionSel + ", " + footerTransitionSel + ", " + logoTransitionSel + " {",
+        "  " +
+          navTransitionSel +
+          ", " +
+          footerTransitionSel +
+          ", " +
+          logoTransitionSel +
+          " {",
         "    transition: none !important;",
         "  }",
         "  " + richTextWhiteSel + " {",
@@ -417,7 +554,9 @@
     if (document.body) {
       markNoFilterScopes();
     } else {
-      document.addEventListener("DOMContentLoaded", markNoFilterScopes, { once: true });
+      document.addEventListener("DOMContentLoaded", markNoFilterScopes, {
+        once: true,
+      });
     }
   }
 
@@ -427,20 +566,26 @@
   function splitClassNames(value) {
     return String(value || "")
       .split(",")
-      .map(function (s) { return s.trim(); })
+      .map(function (s) {
+        return s.trim();
+      })
       .filter(Boolean);
   }
 
   function getTargets() {
     return Array.from(document.querySelectorAll(CONFIG.targetSelector)).filter(
-      function (el) { return !el.closest(CONFIG.staticSelector); }
+      function (el) {
+        return !el.closest(CONFIG.staticSelector);
+      },
     );
   }
 
   function removeDarkThemeClasses(targets) {
     targets.forEach(function (target) {
       splitClassNames(target.getAttribute("data-theme-remove")).forEach(
-        function (cls) { target.classList.remove(cls); }
+        function (cls) {
+          target.classList.remove(cls);
+        },
       );
     });
   }
@@ -459,8 +604,9 @@
       return;
     }
 
-    document.querySelectorAll(NAVBAR_CONFIG.wrapperSelector).forEach(
-      function (wrapper) {
+    document
+      .querySelectorAll(NAVBAR_CONFIG.wrapperSelector)
+      .forEach(function (wrapper) {
         wrapper.classList.remove(NAVBAR_CONFIG.variantClass);
         wrapper.querySelectorAll("*").forEach(function (el) {
           // Skip the Newsletter button — it's lifted above the spot (so it
@@ -473,14 +619,15 @@
           // what the user already sees throughout the spot expansion. Each
           // page navigation reloads the navbar markup so this doesn't
           // accumulate state across pages.
-          if (el.matches(".navbar_newsletter-button, .navbar_newsletter-button *")) {
+          if (
+            el.matches(".navbar_newsletter-button, .navbar_newsletter-button *")
+          ) {
             return;
           }
           el.classList.remove(NAVBAR_CONFIG.variantClass);
         });
         wrapper.setAttribute(NAVBAR_CONFIG.attr, NAVBAR_CONFIG.baseVariant);
-      }
-    );
+      });
 
     window.dispatchEvent(new Event("resize"));
   }
@@ -493,15 +640,18 @@
   function installLogoColorGuard() {
     if (typeof MutationObserver !== "function") return;
 
-    document.querySelectorAll(NAVBAR_CONFIG.wrapperSelector).forEach(
-      function (wrapper) {
+    document
+      .querySelectorAll(NAVBAR_CONFIG.wrapperSelector)
+      .forEach(function (wrapper) {
         var logo = wrapper.querySelector(".navbar_logo-wrapper");
         var trigger = wrapper.querySelector('[navbar-menu="trigger"]');
         if (!logo || !trigger) return;
         if (logo.__hbLogoGuardInstalled) return;
         logo.__hbLogoGuardInstalled = true;
 
-        function isMenuOpen() { return trigger.classList.contains("is-open"); }
+        function isMenuOpen() {
+          return trigger.classList.contains("is-open");
+        }
 
         var observer = new MutationObserver(function () {
           if (isMenuOpen()) return;
@@ -517,8 +667,7 @@
         if (!isMenuOpen() && logo.style && logo.style.color) {
           logo.style.removeProperty("color");
         }
-      }
-    );
+      });
   }
 
   // ─── DEBUG OVERLAY (gated by ?hbdebug=1) ───────────────────────────────────
@@ -530,21 +679,31 @@
   // Tap the overlay to copy its contents to the clipboard.
   function isHbDebugEnabled() {
     try {
-      if (/[?&]hbdebug=1\b/.test((window.location && window.location.search) || "")) return true;
+      if (
+        /[?&]hbdebug=1\b/.test(
+          (window.location && window.location.search) || "",
+        )
+      )
+        return true;
     } catch (_) {}
     try {
-      if (window.localStorage && window.localStorage.getItem("hbdebug") === "1") return true;
+      if (window.localStorage && window.localStorage.getItem("hbdebug") === "1")
+        return true;
     } catch (_) {}
     return false;
   }
 
   var HB_DEBUG = isHbDebugEnabled();
-  var HB_T0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  var HB_T0 =
+    window.performance && performance.now ? performance.now() : Date.now();
   var HB_LOG = [];
   var HB_OVERLAY_EL = null;
 
   function hbNow() {
-    return Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - HB_T0);
+    return Math.round(
+      (window.performance && performance.now ? performance.now() : Date.now()) -
+        HB_T0,
+    );
   }
 
   function hbSnap() {
@@ -553,11 +712,15 @@
     var logo = wrapper.querySelector(".navbar_logo-wrapper");
     var trigger = wrapper.querySelector('[navbar-menu="trigger"]');
     var wcs = window.getComputedStyle ? window.getComputedStyle(wrapper) : null;
-    var lcs = logo && window.getComputedStyle ? window.getComputedStyle(logo) : null;
+    var lcs =
+      logo && window.getComputedStyle ? window.getComputedStyle(logo) : null;
     return {
-      reveal: document.documentElement.getAttribute(CONFIG.revealAttr) || "(unset)",
+      reveal:
+        document.documentElement.getAttribute(CONFIG.revealAttr) || "(unset)",
       variant: wrapper.getAttribute(NAVBAR_CONFIG.attr) || "(unset)",
-      triggerOpen: trigger ? trigger.classList.contains("is-open") : "(no trigger)",
+      triggerOpen: trigger
+        ? trigger.classList.contains("is-open")
+        : "(no trigger)",
       vw: window.innerWidth,
       // Navbar wrapper itself
       wrapperBg: wcs ? wcs.backgroundColor : "?",
@@ -568,7 +731,7 @@
       logoOpacity: lcs ? lcs.opacity : "?",
       logoVisibility: lcs ? lcs.visibility : "?",
       logoTransition: lcs ? lcs.transition : "?",
-      logoInline: logo ? (logo.getAttribute("style") || "") : "(no logo)",
+      logoInline: logo ? logo.getAttribute("style") || "" : "(no logo)",
     };
   }
 
@@ -576,27 +739,38 @@
     if (!HB_DEBUG) return;
     HB_LOG.push({ t: hbNow(), kind: kind, info: info });
     if (HB_LOG.length > 200) HB_LOG.shift();
-    try { console.log("[hb-bn +" + HB_LOG[HB_LOG.length - 1].t + "ms]", kind, info); } catch (_) {}
+    try {
+      console.log("[hb-bn +" + HB_LOG[HB_LOG.length - 1].t + "ms]", kind, info);
+    } catch (_) {}
     hbRender();
   }
 
   function hbEnsureOverlay() {
     if (!HB_DEBUG) return null;
-    if (HB_OVERLAY_EL && document.body && document.body.contains(HB_OVERLAY_EL)) return HB_OVERLAY_EL;
+    if (HB_OVERLAY_EL && document.body && document.body.contains(HB_OVERLAY_EL))
+      return HB_OVERLAY_EL;
     if (!document.body) return null;
     var el = document.createElement("div");
     el.id = "hb-bn-debug";
-    el.setAttribute("style", [
-      "position:fixed", "top:8px", "right:8px",
-      "z-index:2147483647",
-      "max-width:min(96vw,520px)", "max-height:70vh",
-      "overflow:auto",
-      "padding:8px 10px", "border-radius:8px",
-      "background:rgba(0,0,0,0.85)", "color:#0f0",
-      "font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace",
-      "white-space:pre-wrap",
-      "box-shadow:0 4px 16px rgba(0,0,0,0.4)",
-    ].join(";"));
+    el.setAttribute(
+      "style",
+      [
+        "position:fixed",
+        "top:8px",
+        "right:8px",
+        "z-index:2147483647",
+        "max-width:min(96vw,520px)",
+        "max-height:70vh",
+        "overflow:auto",
+        "padding:8px 10px",
+        "border-radius:8px",
+        "background:rgba(0,0,0,0.85)",
+        "color:#0f0",
+        "font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace",
+        "white-space:pre-wrap",
+        "box-shadow:0 4px 16px rgba(0,0,0,0.4)",
+      ].join(";"),
+    );
     el.addEventListener("click", function () {
       try {
         if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
@@ -605,7 +779,9 @@
           n.textContent = "(copied)";
           n.style.color = "#9ff";
           el.appendChild(n);
-          setTimeout(function () { if (n.parentNode) n.parentNode.removeChild(n); }, 1000);
+          setTimeout(function () {
+            if (n.parentNode) n.parentNode.removeChild(n);
+          }, 1000);
         }
       } catch (_) {}
     });
@@ -622,22 +798,60 @@
     var head = "[hb-bn build=" + HB_BUILD + "] tap to copy\n";
     if (s) {
       head +=
-        "reveal=" + s.reveal + " | variant=" + s.variant +
-        " | open=" + s.triggerOpen + " | vw=" + s.vw + "\n" +
-        "WRAPPER bg=" + s.wrapperBg + " | color=" + s.wrapperColor + "\n" +
-        "  trans=" + s.wrapperTransition + "\n" +
-        "LOGO color=" + s.logoColor + " | op=" + s.logoOpacity + " | vis=" + s.logoVisibility + "\n" +
-        "  trans=" + s.logoTransition + "\n" +
-        "  inline=" + (s.logoInline || "(none)") + "\n";
+        "reveal=" +
+        s.reveal +
+        " | variant=" +
+        s.variant +
+        " | open=" +
+        s.triggerOpen +
+        " | vw=" +
+        s.vw +
+        "\n" +
+        "WRAPPER bg=" +
+        s.wrapperBg +
+        " | color=" +
+        s.wrapperColor +
+        "\n" +
+        "  trans=" +
+        s.wrapperTransition +
+        "\n" +
+        "LOGO color=" +
+        s.logoColor +
+        " | op=" +
+        s.logoOpacity +
+        " | vis=" +
+        s.logoVisibility +
+        "\n" +
+        "  trans=" +
+        s.logoTransition +
+        "\n" +
+        "  inline=" +
+        (s.logoInline || "(none)") +
+        "\n";
     } else {
       head += "(no navbar wrapper found yet)\n";
     }
-    var rows = HB_LOG.slice(-80).map(function (e) {
-      return "+" + e.t + "ms " + e.kind +
-        (e.info && typeof e.info === "object" ? " " + JSON.stringify(e.info) :
-         e.info != null ? " " + e.info : "");
-    }).join("\n");
-    el.textContent = head + "\n--- last " + Math.min(HB_LOG.length, 80) + " events ---\n" + rows;
+    var rows = HB_LOG.slice(-80)
+      .map(function (e) {
+        return (
+          "+" +
+          e.t +
+          "ms " +
+          e.kind +
+          (e.info && typeof e.info === "object"
+            ? " " + JSON.stringify(e.info)
+            : e.info != null
+              ? " " + e.info
+              : "")
+        );
+      })
+      .join("\n");
+    el.textContent =
+      head +
+      "\n--- last " +
+      Math.min(HB_LOG.length, 80) +
+      " events ---\n" +
+      rows;
   }
 
   function installDebugInstrumentation() {
@@ -649,7 +863,9 @@
     var trigger = wrapper.querySelector('[navbar-menu="trigger"]');
 
     new MutationObserver(function (muts) {
-      muts.forEach(function (m) { hbLog("wrapper." + m.attributeName, hbSnap()); });
+      muts.forEach(function (m) {
+        hbLog("wrapper." + m.attributeName, hbSnap());
+      });
     }).observe(wrapper, {
       attributes: true,
       attributeFilter: ["class", NAVBAR_CONFIG.attr, "style"],
@@ -657,7 +873,9 @@
 
     if (trigger) {
       new MutationObserver(function (muts) {
-        muts.forEach(function (m) { hbLog("trigger." + m.attributeName, hbSnap()); });
+        muts.forEach(function (m) {
+          hbLog("trigger." + m.attributeName, hbSnap());
+        });
       }).observe(trigger, {
         attributes: true,
         attributeFilter: ["class", "aria-expanded"],
@@ -667,7 +885,10 @@
     new MutationObserver(function (muts) {
       muts.forEach(function (m) {
         if (m.attributeName === CONFIG.revealAttr) {
-          hbLog("html.reveal", document.documentElement.getAttribute(CONFIG.revealAttr));
+          hbLog(
+            "html.reveal",
+            document.documentElement.getAttribute(CONFIG.revealAttr),
+          );
         }
       });
     }).observe(document.documentElement, {
@@ -701,15 +922,15 @@
   // class from the wrapper and every descendant carrying it, and flip the
   // data-wf--footer--variant attribute to "dark-mode".
   function setFooterDarkMode() {
-    document.querySelectorAll(FOOTER_CONFIG.wrapperSelector).forEach(
-      function (footer) {
+    document
+      .querySelectorAll(FOOTER_CONFIG.wrapperSelector)
+      .forEach(function (footer) {
         footer.classList.remove(FOOTER_CONFIG.variantClass);
         footer.querySelectorAll("*").forEach(function (el) {
           el.classList.remove(FOOTER_CONFIG.variantClass);
         });
         footer.setAttribute(FOOTER_CONFIG.attr, FOOTER_CONFIG.darkVariant);
-      }
-    );
+      });
   }
 
   // ─── ORIGIN & SCALE ────────────────────────────────────────────────────────
@@ -883,8 +1104,14 @@
     window.requestAnimationFrame(function () {
       window.requestAnimationFrame(function () {
         spot.style.transition =
-          "width " + CONFIG.durationMs + "ms " + CONFIG.easing +
-          ", height " + CONFIG.durationMs + "ms " + CONFIG.easing;
+          "width " +
+          CONFIG.durationMs +
+          "ms " +
+          CONFIG.easing +
+          ", height " +
+          CONFIG.durationMs +
+          "ms " +
+          CONFIG.easing;
         spot.style.width = scale + "px";
         spot.style.height = scale + "px";
 
