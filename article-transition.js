@@ -37,11 +37,20 @@
  *    icon visually invert in lockstep with the spot's edge sweeping over
  *    them. This matches the WordPress reference and keeps the navbar
  *    transition perfectly synced with the rest of the page reveal. The
- *    only navbar element lifted above the spot is `.navbar_newsletter-
- *    button` — without that lift the difference blend would turn the blue
- *    badge yellow. The same lift is applied to the third-party cookie-script
- *    consent banner (`#cookiescript_injected`), whose blue background would
- *    otherwise flash blue → yellow → blue as the spot sweeps over it. The
+ *    The blue `.navbar_newsletter-button` badge must NOT invert, but it
+ *    canNOT simply be lifted with z-index: it lives inside the fixed navbar
+ *    (`.navbar`, z-index:999), which is its own stacking context sitting
+ *    BELOW the spot in the root stacking context — so no z-index on the
+ *    button can escape it (an earlier build tried and it never worked). We
+ *    can't raise the whole navbar above the spot either: we WANT the spot to
+ *    invert the navbar bg/logo/hamburger in lockstep. Instead we paint a
+ *    non-interactive CLONE of the button as a root-level fixed layer ABOVE
+ *    the spot, exactly over the original (see createNewsletterShield). The
+ *    clone isn't part of the spot's backdrop so it stays blue; the original
+ *    underneath still inverts but is hidden by the clone, and shows blue
+ *    again the instant the spot is removed at finish(). The same "render a
+ *    root-level layer above the spot" trick keeps the third-party
+ *    cookie-script consent banner (`#cookiescript_injected`) blue. The
  *    variant swap (dark → base) fires at finish() (the
  *    moment the spot completes) and is atomic: the underlying DOM snaps
  *    to the state the blend was already showing, so removing the spot is
@@ -71,7 +80,7 @@
   // Build marker so we can confirm in the debug overlay / console which
   // revision of the script is actually executing on the page (rules out
   // stale cache / un-republished embed when troubleshooting).
-  var HB_BUILD = "v9-cookie-banner-lift";
+  var HB_BUILD = "v10-newsletter-shield";
   try {
     console.log("[hb-bn] build", HB_BUILD);
   } catch (_) {}
@@ -104,6 +113,11 @@
     // by default, so the z-index takes effect there).
     cookieBannerSelector:
       "#cookiescript_injected_wrapper, #cookiescript_injected",
+    // The blue newsletter badge. It's trapped inside the fixed navbar's
+    // stacking context (below the spot), so it can't be lifted with z-index —
+    // we clone it above the spot at runtime instead (createNewsletterShield).
+    newsletterButtonSelector: ".navbar_newsletter-button",
+    shieldClass: "hb-newsletter-shield",
     spotClass: "hb-breaking-news-spot",
     initStyleId: "hb-breaking-news-init-styles",
     spotStyleId: "hb-breaking-news-spot-styles",
@@ -202,11 +216,13 @@
     //     where logo and bg have the same RGB value — see the chrome
     //     transition comment below).
     //
-    //   - `.navbar_newsletter-button` IS lifted above the spot. It's the
-    //     only non-grayscale element in the navbar; without lifting it the
-    //     difference blend would turn the blue badge yellow mid-reveal.
-    //     The Webflow `<a>` is `position: static` by default so we also set
-    //     `position: relative` to give the z-index a positioning context.
+    //   - `.navbar_newsletter-button` (the blue badge) must NOT be inverted,
+    //     but it CANNOT be lifted with z-index here: it's trapped inside the
+    //     fixed navbar's stacking context (.navbar, z-index:999), which sits
+    //     below the spot in the root stacking context, so a z-index on the
+    //     button can't escape it. It's handled separately at runtime by
+    //     painting a clone above the spot — see createNewsletterShield(). No
+    //     CSS lift for it here.
     //
     //   - The FOOTER WRAPPER is still lifted. The footer is below the fold
     //     during the reveal on most viewports, but we lift it as a belt-and-
@@ -268,9 +284,6 @@
         scope
       );
     }
-    var newsletterLiftSel = liftSelector(
-      NAVBAR_CONFIG.wrapperSelector + " .navbar_newsletter-button",
-    );
     var footerPositionSel = liftSelector(FOOTER_CONFIG.wrapperSelector);
     var footerZIndexSel = revealOnlyLiftSelector(FOOTER_CONFIG.wrapperSelector);
 
@@ -413,15 +426,6 @@
         "ms " +
         CONFIG.colorFadeEasing +
         ";",
-      "}",
-      // Newsletter button: only non-grayscale element in the navbar (blue
-      // badge). Lifted above the spot so the difference blend doesn't turn
-      // it yellow. Set `position: relative` so the z-index has a positioning
-      // context — the Webflow `<a>` is `position: static` by default. Layout
-      // is unaffected (no inset values applied).
-      newsletterLiftSel + " {",
-      "  position: relative !important;",
-      "  z-index: 2147483647 !important;",
       "}",
       // Footer is normally position: static — needs `position: relative` for
       // z-index to take effect. This doesn't change layout (footer is still
@@ -1000,6 +1004,61 @@
     return spot;
   }
 
+  // ─── NEWSLETTER SHIELD ───────────────────────────────────────────────────────
+  // The blue `.navbar_newsletter-button` badge is trapped inside the fixed
+  // navbar's stacking context (.navbar, z-index:999), which sits BELOW the
+  // spot (z-index:2147483646) in the root stacking context. A z-index on the
+  // button itself can't escape that context, so the spot's `mix-blend-mode:
+  // difference` inverts the blue badge to yellow as it sweeps over the navbar.
+  // We can't raise the whole navbar above the spot (we WANT the navbar bg/logo
+  // to invert in lockstep). So we paint a non-interactive CLONE of the button
+  // as a root-level fixed layer ABOVE the spot, positioned exactly over the
+  // original. Being a sibling of the spot with a higher z-index, the clone is
+  // NOT part of the spot's backdrop, so it renders at its true blue. The
+  // original underneath still inverts but is fully covered by the clone, and
+  // shows blue again the instant the spot is removed at finish(). This is the
+  // same "root-level layer above the spot" mechanism that keeps the cookie
+  // banner blue — the only reliable way to exempt an element from a
+  // difference-blend overlay it would otherwise sit beneath.
+  function createNewsletterShield() {
+    var btn =
+      document.querySelector(
+        NAVBAR_CONFIG.wrapperSelector + " " + CONFIG.newsletterButtonSelector,
+      ) || document.querySelector(CONFIG.newsletterButtonSelector);
+    if (!btn) return null;
+
+    var rect = btn.getBoundingClientRect();
+    // Not laid out / hidden (e.g. mobile menu collapsed) — nothing to shield.
+    if (!rect.width || !rect.height) return null;
+
+    var clone = btn.cloneNode(true);
+    clone.classList.add(CONFIG.shieldClass);
+    // Belt-and-braces: the shield carries no <img>, but mark it so it can
+    // never pick up the image-inversion filter.
+    clone.setAttribute(CONFIG.noFilterAttr, "");
+    // Purely decorative duplicate — keep it out of the a11y tree and tab order
+    // and make sure it never intercepts clicks meant for the real button.
+    clone.setAttribute("aria-hidden", "true");
+    clone.setAttribute("tabindex", "-1");
+    if (clone.removeAttribute) clone.removeAttribute("id");
+
+    var s = clone.style;
+    s.position = "fixed";
+    // border-box so the rect's border-box dimensions map 1:1 regardless of the
+    // button's own box-sizing — guarantees a pixel-exact overlay.
+    s.boxSizing = "border-box";
+    s.top = rect.top + "px";
+    s.left = rect.left + "px";
+    s.width = rect.width + "px";
+    s.height = rect.height + "px";
+    s.margin = "0";
+    s.zIndex = "2147483647"; // one above the spot (2147483646)
+    s.pointerEvents = "none";
+
+    document.body.appendChild(clone);
+    return clone;
+  }
+
   // ─── REVEAL STATE ──────────────────────────────────────────────────────────
   function setRevealState(state) {
     document.documentElement.setAttribute(CONFIG.revealAttr, state);
@@ -1036,6 +1095,10 @@
     var origin = getOrigin();
     var scale = getSpotScale();
     var spot = createSpot(origin);
+    // Root-level clone painted above the spot so the blue newsletter badge
+    // doesn't invert to yellow as the spot sweeps over the navbar. Removed in
+    // finish() together with the spot. See createNewsletterShield.
+    var newsletterShield = createNewsletterShield();
 
     var swapped = false;
     var navbarSwapped = false;
@@ -1081,6 +1144,13 @@
 
       if (spot.parentNode) {
         spot.parentNode.removeChild(spot);
+      }
+
+      // Remove the newsletter shield at the same instant the spot goes away.
+      // With the spot gone the real badge is no longer inverted, so the swap
+      // from clone → real button is seamless (both blue, same position).
+      if (newsletterShield && newsletterShield.parentNode) {
+        newsletterShield.parentNode.removeChild(newsletterShield);
       }
 
       // 3. Force a reflow so the cut state actually flushes before we apply
