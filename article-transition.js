@@ -123,7 +123,14 @@
     spotStyleId: "hb-breaking-news-spot-styles",
     revealAttr: "data-breaking-news-reveal",
     noFilterAttr: "data-bn-no-filter",
-    bootDelayMs: 80,
+    bootDelayMs: 0,
+    // The hero graphic. We gate the reveal on THIS image decoding (so it
+    // never pops in mid-animation) rather than on window.load, which waits
+    // for every video/analytics/app bundle on the page.
+    heroSelector: ".article-hero_image",
+    // Hard cap: the reveal can never wait longer than this for the hero,
+    // so a slow or broken image can't stall the page in its B&W state.
+    heroMaxWaitMs: 1200,
     // Spot expansion: matches WP's `power1.in` over 0.6s
     durationMs: 600,
     easing: "cubic-bezier(0.55, 0.085, 0.68, 0.53)",
@@ -1208,13 +1215,54 @@
   }
 
   // ─── BOOT ──────────────────────────────────────────────────────────────────
+  // Boot when the DOM is parsed — do NOT wait for window.load. The `load`
+  // event is gated by every resource on the page (autoplay .mov videos,
+  // analytics pings, app bundles), which on a real article doesn't fire until
+  // ~4.5s. Because the B&W/inverted filter is applied synchronously at script
+  // execute, waiting for `load` to start the reveal would hold the hero in its
+  // grayscale-inverted state for that entire time — even though the hero image
+  // itself is downloaded in under a second.
+  //
+  // We only need (a) the DOM, to find the swap targets and the logo origin,
+  // and (b) the hero image decoded, so it doesn't pop in mid-reveal. We gate
+  // on the hero specifically, with a hard timeout so a slow/broken image can
+  // never stall the reveal.
   function boot() {
     window.setTimeout(runReveal, CONFIG.bootDelayMs);
   }
 
-  if (document.readyState === "complete") {
-    boot();
+  function bootWhenHeroReady() {
+    var hero = document.querySelector(CONFIG.heroSelector);
+    // No hero (or already loaded from cache) — nothing to wait for.
+    if (!hero || hero.complete) {
+      boot();
+      return;
+    }
+
+    var fired = false;
+    var go = function () {
+      if (fired) return;
+      fired = true;
+      boot();
+    };
+
+    // decode() resolves once the image is ready to paint without jank.
+    // Fall through to load/error/timeout if it's unsupported or rejects.
+    if (typeof hero.decode === "function") {
+      hero.decode().then(go, go);
+    }
+    hero.addEventListener("load", go, { once: true });
+    hero.addEventListener("error", go, { once: true });
+    // Hard cap — the reveal must never wait longer than this.
+    window.setTimeout(go, CONFIG.heroMaxWaitMs);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootWhenHeroReady, {
+      once: true,
+    });
   } else {
-    window.addEventListener("load", boot, { once: true });
+    bootWhenHeroReady();
   }
 })();
+
